@@ -13,15 +13,16 @@ import ApplicationServices
 /// window receives the scroll regardless of where the real cursor sits.
 ///
 /// ## Loop prevention
-/// Session-level posting re-enters our own listen-only tap.  We mark synthetic
-/// events by writing a fixed value into `kCGEventSourceUserData` (field 28), a
-/// field documented as "programmer-defined value" that apps ignore.  The tap
-/// skips any event carrying that marker.
+/// Session-level posting re-enters our own listen-only tap.  We distinguish
+/// real events from synthetic ones by comparing the event's embedded position
+/// (`event.location`) against the real hardware cursor (`NSEvent.mouseLocation`):
+///
+///   • Real user scroll:   event.location ≈ cursor  (both inside the source window)
+///   • Synthetic we posted: event.location = centre of target window ≠ cursor
+///
+/// We only process an event if both positions land in the same watched window.
+/// This is stateless and immune to rapid-scroll races.
 final class ScrollSyncManager {
-
-    private static let syntheticMarker: Int64 = 0x5C524C59  // 'SCRLY'
-    // kCGEventSourceUserData — "programmer-defined integer value copied into the event"
-    private static let markerField = CGEventField(rawValue: 28)!
 
     private(set) var watchedWindows: [WatchedWindow] = []
     var onWindowsChanged: (() -> Void)?
@@ -104,34 +105,37 @@ final class ScrollSyncManager {
     // MARK: - Scroll handling
 
     private func handleScrollEvent(_ event: CGEvent) {
-        // Skip synthetic events we posted (loop prevention).
-        if event.getIntegerValueField(Self.markerField) == Self.syntheticMarker { return }
-
         // Option/Alt held → pass through without syncing (manual nudge).
         guard !event.flags.contains(.maskAlternate) else { return }
 
         pruneInvalidWindows()
         guard watchedWindows.count >= 2 else { return }
 
-        // Identify the source watched window by the mouse position in the event.
-        let mousePos = event.location
-        guard let sourceWindow = watchedWindows.first(where: { $0.quartzFrame?.contains(mousePos) == true }) else {
-            return
-        }
+        // Loop prevention via double-position check:
+        //   event.location  = position baked into the event (real cursor for user events;
+        //                      centre of target window for events we posted)
+        //   NSEvent.mouseLocation = actual hardware cursor at this instant
+        //
+        // For a real user scroll both land in the same window.
+        // For a synthetic event we posted, event.location is in the target window
+        // but the cursor is still in the source window → they disagree → we skip it.
+        let eventPos  = event.location
+        let cursorPos = NSEvent.mouseLocation   // AppKit coords, same space as quartzFrame
+
+        guard let sourceWindow = watchedWindows.first(where: { window in
+            guard let frame = window.quartzFrame else { return false }
+            return frame.contains(eventPos) && frame.contains(cursorPos)
+        }) else { return }
 
         let targets = watchedWindows.filter { !CFEqual($0.axWindow, sourceWindow.axWindow) }
         guard !targets.isEmpty else { return }
 
-        NSLog("Scrolly: forwarding scroll from %@ to %d window(s)", sourceWindow.menuLabel, targets.count)
+        NSLog("Scrolly: forwarding from \(sourceWindow.menuLabel) to \(targets.count) window(s)")
 
         for target in targets {
             guard let center = target.quartzCenter,
                   let copy = event.copy() else { continue }
-            // Set target position so the OS routes the event to this window.
             copy.location = center
-            // Mark as synthetic so our own tap ignores it.
-            copy.setIntegerValueField(Self.markerField, value: Self.syntheticMarker)
-            // Session-level post: routed by event.location to whatever window is there.
             copy.post(tap: .cgSessionEventTap)
         }
     }
