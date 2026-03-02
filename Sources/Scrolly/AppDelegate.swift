@@ -5,40 +5,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusBarController: StatusBarController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Accessibility permission is required for CGEventTap and AX APIs.
-        // Passing `prompt: true` shows the system dialog on first run.
-        let options = [kAXTrustedCheckOptionPrompt.takeRetainedValue() as String: true] as CFDictionary
-        let trusted = AXIsProcessTrustedWithOptions(options)
-
-        if !trusted {
-            showAccessibilityAlert()
-        }
-
+        // Permission state is surfaced through the status-bar menu.
+        // We do NOT call AXIsProcessTrustedWithOptions(prompt:true) here because:
+        //   • Each rebuild produces a new binary signature; macOS treats it as a
+        //     new app and invalidates the previous permission entry.
+        //   • Prompting unconditionally on every launch confuses users who have
+        //     already granted access (it just shows "enable in Settings" again).
+        // Instead, the menu shows a clear action item when permission is missing,
+        // and the WindowPicker surfaces an actionable error when it actually fails.
         statusBarController = StatusBarController()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ app: NSApplication) -> Bool {
-        // Keep running even if no windows are open (status-bar app).
         return false
-    }
-
-    // MARK: - Accessibility alert
-
-    private func showAccessibilityAlert() {
-        let alert = NSAlert()
-        alert.messageText = "Accessibility Permission Required"
-        alert.informativeText = """
-            Scrolly needs Accessibility access to monitor scroll events and identify windows.
-
-            Please open System Settings → Privacy & Security → Accessibility and enable Scrolly, then relaunch the app.
-            """
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "Open System Settings")
-        alert.addButton(withTitle: "Later")
-
-        if alert.runModal() == .alertFirstButtonReturn {
-            let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
-            NSWorkspace.shared.open(url)
-        }
     }
 }

@@ -3,10 +3,12 @@ import ApplicationServices
 
 /// Installs a one-shot CGEventTap that intercepts the next left-mouse-down,
 /// identifies the window under the cursor via the Accessibility API,
-/// and calls `onWindowPicked` (or `onCancelled` on right-click / Escape).
+/// and calls `onWindowPicked`, `onCancelled` (user cancelled), or
+/// `onFailed` (something went wrong — includes a human-readable reason).
 final class WindowPicker {
     var onWindowPicked: ((WatchedWindow) -> Void)?
     var onCancelled: (() -> Void)?
+    var onFailed: ((String) -> Void)?
 
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
@@ -25,15 +27,25 @@ final class WindowPicker {
         eventTap = CGEvent.tapCreate(
             tap: .cgSessionEventTap,
             place: .headInsertEventTap,
-            options: .defaultTap,          // not listen-only: we can eat the event
+            options: .defaultTap,
             eventsOfInterest: mask,
             callback: WindowPicker.tapCallback,
             userInfo: Unmanaged.passUnretained(self).toOpaque()
         )
 
         guard let tap = eventTap else {
-            // Accessibility permission is likely missing.
-            onCancelled?()
+            // tapCreate returns nil when the process is not a trusted accessibility
+            // client — i.e. Accessibility permission is not granted (or was revoked
+            // by a binary change after a rebuild).
+            fail("""
+                Could not install the event tap. Accessibility permission is required.
+
+                In System Settings → Privacy & Security → Accessibility:
+                • If Scrolly is not listed: click + and add it.
+                • If Scrolly is already listed and enabled: toggle it OFF, then back ON, then relaunch Scrolly.
+
+                (macOS revokes permission when the app binary is rebuilt.)
+                """)
             return
         }
 
@@ -75,7 +87,7 @@ final class WindowPicker {
         case .rightMouseDown:
             stop()
             onCancelled?()
-            return nil  // eat right-click too
+            return nil
 
         case .keyDown:
             let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
@@ -97,19 +109,30 @@ final class WindowPicker {
         let system = AXUIElementCreateSystemWide()
         var element: AXUIElement?
 
-        // AX uses top-left origin; Quartz uses bottom-left.
-        // NSScreen.screens[0].frame.height gives the primary screen height in points.
+        // AX coords: top-left origin, Y downward.
+        // Quartz coords (CGEvent.location): bottom-left origin, Y upward.
         let screenH = NSScreen.screens.first?.frame.height ?? 0
         let axY = Float(screenH - quartzPoint.y)
 
-        guard AXUIElementCopyElementAtPosition(system, Float(quartzPoint.x), axY, &element) == .success,
-              let el = element else {
-            onCancelled?()
+        let axResult = AXUIElementCopyElementAtPosition(system, Float(quartzPoint.x), axY, &element)
+
+        guard axResult == .success, let el = element else {
+            switch axResult {
+            case .apiDisabled:
+                fail("""
+                    Accessibility API is disabled system-wide.
+                    Enable it in System Settings → Privacy & Security → Accessibility.
+                    """)
+            case .notImplemented:
+                fail("No accessible element found at that location. The app under the cursor may not support accessibility.")
+            default:
+                fail("Could not identify a window at that location (AX error \(axResult.rawValue)). Try clicking directly on the window content.")
+            }
             return
         }
 
         guard let axWindow = axWindowElement(from: el) else {
-            onCancelled?()
+            fail("Clicked element is not inside an accessible window. Try clicking on the window's content area.")
             return
         }
 
@@ -131,7 +154,7 @@ final class WindowPicker {
     private func axWindowElement(from element: AXUIElement) -> AXUIElement? {
         var current: AXUIElement = element
 
-        for _ in 0..<20 {  // bounded walk to avoid infinite loops
+        for _ in 0..<20 {
             var roleVal: AnyObject?
             guard AXUIElementCopyAttributeValue(current, kAXRoleAttribute as CFString, &roleVal) == .success,
                   let role = roleVal as? String else { return nil }
@@ -142,9 +165,14 @@ final class WindowPicker {
             var parentVal: AnyObject?
             guard AXUIElementCopyAttributeValue(current, kAXParentAttribute as CFString, &parentVal) == .success,
                   let parent = parentVal else { return nil }
-            // swiftlint:disable force_cast
             current = parent as! AXUIElement
         }
         return nil
+    }
+
+    // MARK: - Helpers
+
+    private func fail(_ reason: String) {
+        onFailed?(reason)
     }
 }
