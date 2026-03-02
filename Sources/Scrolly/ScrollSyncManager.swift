@@ -4,8 +4,10 @@ import ApplicationServices
 /// Manages the list of watched windows and the system-wide scroll event tap.
 ///
 /// When a scroll event arrives in a watched window (and Option is not held)
-/// the same delta is forwarded to every other watched window by re-posting
-/// a copy of the event positioned at the centre of each target window.
+/// the same delta is forwarded to every other watched window via
+/// CGEventPostToPid — injected directly into each target process so that:
+///   • the system cursor position is NOT updated (no cursor jumping)
+///   • the events do NOT re-enter our session-level tap (no loop counter needed)
 final class ScrollSyncManager {
 
     private(set) var watchedWindows: [WatchedWindow] = []
@@ -15,10 +17,6 @@ final class ScrollSyncManager {
 
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
-
-    /// Number of synthetic scroll events we have posted that have not yet
-    /// passed through our own tap callback. Used to break the forwarding loop.
-    private var pendingSynthetic = 0
 
     // MARK: - Window management
 
@@ -80,7 +78,6 @@ final class ScrollSyncManager {
         }
         eventTap = nil
         runLoopSource = nil
-        pendingSynthetic = 0
     }
 
     // MARK: - C-compatible tap callback
@@ -95,12 +92,6 @@ final class ScrollSyncManager {
     // MARK: - Scroll handling
 
     private func handleScrollEvent(_ event: CGEvent) {
-        // Skip events we posted ourselves.
-        if pendingSynthetic > 0 {
-            pendingSynthetic -= 1
-            return
-        }
-
         // Skip when Option/Alt is held — lets the user nudge a window independently.
         guard !event.flags.contains(.maskAlternate) else { return }
 
@@ -118,15 +109,15 @@ final class ScrollSyncManager {
         guard !targets.isEmpty else { return }
 
         // Forward to every other watched window.
-        pendingSynthetic += targets.count
+        // CGEventPostToPid injects directly into the target process queue:
+        //   • Does NOT update the system cursor position → no cursor jumping
+        //   • Does NOT re-enter our session-level tap → no loop, no counter needed
+        //   • Target process routes the event to the window at copy.location
         for target in targets {
             guard let center = target.quartzCenter,
-                  let copy = event.copy() else {
-                pendingSynthetic -= 1
-                continue
-            }
+                  let copy = event.copy() else { continue }
             copy.location = center
-            copy.post(tap: .cgSessionEventTap)
+            copy.postToPid(target.pid)
         }
     }
 }
