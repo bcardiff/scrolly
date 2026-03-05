@@ -23,6 +23,8 @@
     <string>NSApplication</string>
     <key>NSAccessibilityUsageDescription</key>
     <string>Scrolly needs Accessibility access to monitor scroll events and identify windows across applications.</string>
+    <key>CFBundleIconFile</key>
+    <string>Scrolly</string>
     <key>NSHumanReadableCopyright</key>
     <string>© 2025 bcardiff</string>
     <key>LSMinimumSystemVersion</key>

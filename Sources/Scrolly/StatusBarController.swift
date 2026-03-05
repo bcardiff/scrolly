@@ -77,6 +77,14 @@ final class StatusBarController {
             )
             permItem.target = self
             menu.addItem(permItem)
+
+            let restartItem = NSMenuItem(
+                title: "Restart Scrolly",
+                action: #selector(restartScrolly),
+                keyEquivalent: ""
+            )
+            restartItem.target = self
+            menu.addItem(restartItem)
             menu.addItem(.separator())
         }
 
@@ -138,6 +146,16 @@ final class StatusBarController {
     @objc private func removeWatchedWindow(_ sender: NSMenuItem) {
         guard let win = sender.representedObject as? WatchedWindow else { return }
         syncManager.removeWindow(win)
+    }
+
+    @objc private func restartScrolly() {
+        // Spawn a shell that waits for this process to exit, then reopens the app.
+        let path = Bundle.main.bundleURL.path
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/bin/sh")
+        task.arguments = ["-c", "sleep 0.5; open '\(path)'"]
+        try? task.run()
+        NSApp.terminate(nil)
     }
 
     @objc private func openAccessibilitySettings() {

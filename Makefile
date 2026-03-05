@@ -5,6 +5,7 @@ APP_BUNDLE   = $(APP_NAME).app
 BINARY       = $(BUILD_DIR)/$(APP_NAME)
 ENTITLEMENTS = Resources/Scrolly.entitlements
 PLIST        = Resources/Info.plist
+ICON         = Resources/Scrolly.icns
 
 .PHONY: build app install clean run
 
@@ -17,6 +18,7 @@ app: build
 	mkdir -p $(APP_BUNDLE)/Contents/Resources
 	cp $(BINARY)     $(APP_BUNDLE)/Contents/MacOS/
 	cp $(PLIST)      $(APP_BUNDLE)/Contents/
+	cp $(ICON)       $(APP_BUNDLE)/Contents/Resources/
 	# Ad-hoc sign with entitlements (no Apple Developer account needed)
 	codesign --sign - \
 	         --entitlements $(ENTITLEMENTS) \
