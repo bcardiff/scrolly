@@ -79,7 +79,7 @@ final class WindowPicker {
     private func handle(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
         switch type {
         case .leftMouseDown:
-            let pos = event.location
+            let pos = NSEvent.mouseLocation
             stop()
             identifyWindow(at: pos)
             return nil  // eat the click
@@ -150,10 +150,19 @@ final class WindowPicker {
         onWindowPicked?(watched)
     }
 
-    /// Walks up the AX element hierarchy until an element with role AXWindow is found.
+    /// Returns the AXWindow element that contains `element`.
+    /// First tries the direct kAXWindowAttribute (fast path, works reliably on secondary monitors),
+    /// then falls back to walking up the parent chain.
     private func axWindowElement(from element: AXUIElement) -> AXUIElement? {
-        var current: AXUIElement = element
+        // Fast path: most AX elements have a kAXWindowAttribute pointing directly to their window.
+        var windowVal: AnyObject?
+        if AXUIElementCopyAttributeValue(element, kAXWindowAttribute as CFString, &windowVal) == .success,
+           let win = windowVal {
+            return (win as! AXUIElement)
+        }
 
+        // Fallback: walk up the parent chain.
+        var current: AXUIElement = element
         for _ in 0..<20 {
             var roleVal: AnyObject?
             guard AXUIElementCopyAttributeValue(current, kAXRoleAttribute as CFString, &roleVal) == .success,
