@@ -2,3 +2,4 @@
 *.app/
 *.xcuserstate
 .DS_Store
+*.local.*
