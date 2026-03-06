@@ -2,6 +2,8 @@
 
 A minimal macOS menu-bar utility that synchronizes vertical scroll across two or more windows — from the same or different apps.
 
+**[▶ Demo video](https://www.youtube.com/watch?v=HaFi8RsJU8U)**
+
 ## How It Works
 
 1. Click the **Scrolly icon** in the menu bar.
