@@ -3,12 +3,15 @@ import ApplicationServices
 
 /// Owns the NSStatusItem (menu-bar icon + menu) and coordinates between
 /// WindowPicker and ScrollSyncManager.
-final class StatusBarController {
+final class StatusBarController: NSObject, NSMenuDelegate {
+
+    private static let quitItemTag = 1
 
     private let statusItem: NSStatusItem
     private let syncManager = ScrollSyncManager()
     private let picker = WindowPicker()
     private var isPickerActive = false
+    private var flagsTimer: Timer?
 
     private let idleImage: NSImage = {
         let img = NSImage(systemSymbolName: "arrow.up.and.down", accessibilityDescription: "Scrolly") ?? NSImage()
@@ -23,8 +26,10 @@ final class StatusBarController {
 
     // MARK: - Init
 
-    init() {
+    override init() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        super.init()
+
         statusItem.button?.image = idleImage
         statusItem.button?.toolTip = "Scrolly"
 
@@ -113,10 +118,25 @@ final class StatusBarController {
 
         menu.addItem(.separator())
 
-        // -- Quit --
-        let quit = NSMenuItem(title: "Quit Scrolly", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        // -- About --
+        let about = NSMenuItem(title: "About Scrolly", action: #selector(showAbout), keyEquivalent: "")
+        about.target = self
+        menu.addItem(about)
+
+        // -- Quit / Restart (toggled live via flagsChanged monitor in menuWillOpen) --
+        let quit = NSMenuItem(title: "Quit Scrolly", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "")
+        quit.tag = StatusBarController.quitItemTag
         menu.addItem(quit)
 
+        if AXIsProcessTrusted() {
+            let restart = NSMenuItem(title: "Restart Scrolly", action: #selector(restartScrolly), keyEquivalent: "")
+            restart.tag = StatusBarController.quitItemTag + 1
+            restart.target = self
+            restart.isHidden = true
+            menu.addItem(restart)
+        }
+
+        menu.delegate = self
         statusItem.menu = menu
     }
 
@@ -156,6 +176,19 @@ final class StatusBarController {
         task.arguments = ["-c", "sleep 0.5; open '\(path)'"]
         try? task.run()
         NSApp.terminate(nil)
+    }
+
+    @objc private func showAbout() {
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
+        let alert = NSAlert()
+        alert.messageText = "Scrolly \(version)"
+        alert.informativeText = "Synchronises vertical scroll across two or more windows.\n\nhttps://github.com/bcardiff/scrolly"
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "GitHub →")
+        alert.addButton(withTitle: "OK")
+        if alert.runModal() == .alertFirstButtonReturn {
+            NSWorkspace.shared.open(URL(string: "https://github.com/bcardiff/scrolly")!)
+        }
     }
 
     @objc private func openAccessibilitySettings() {
@@ -202,5 +235,28 @@ final class StatusBarController {
     private func openSystemSettings() {
         let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
         NSWorkspace.shared.open(url)
+    }
+
+    // MARK: - NSMenuDelegate
+
+    func menuWillOpen(_ menu: NSMenu) {
+        updateQuitRestart(in: menu, optionHeld: NSEvent.modifierFlags.contains(.option))
+        let timer = Timer(timeInterval: 0.05, repeats: true) { [weak self, weak menu] _ in
+            guard let self, let menu else { return }
+            self.updateQuitRestart(in: menu, optionHeld: NSEvent.modifierFlags.contains(.option))
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        flagsTimer = timer
+    }
+
+    func menuDidClose(_ menu: NSMenu) {
+        flagsTimer?.invalidate()
+        flagsTimer = nil
+    }
+
+    private func updateQuitRestart(in menu: NSMenu, optionHeld: Bool) {
+        let swap = optionHeld && AXIsProcessTrusted()
+        menu.item(withTag: StatusBarController.quitItemTag)?.isHidden = swap
+        menu.item(withTag: StatusBarController.quitItemTag + 1)?.isHidden = !swap
     }
 }
