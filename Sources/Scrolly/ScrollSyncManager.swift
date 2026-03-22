@@ -31,6 +31,13 @@ final class ScrollSyncManager {
     private(set) var watchedWindows: [WatchedWindow] = []
     var onWindowsChanged: (() -> Void)?
 
+    /// When enabled, scroll deltas are scaled by page-count ratio so that
+    /// documents with different page counts scroll at the same page speed.
+    var pageBasedScroll: Bool {
+        get { UserDefaults.standard.bool(forKey: "pageBasedScroll") }
+        set { UserDefaults.standard.set(newValue, forKey: "pageBasedScroll") }
+    }
+
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
 
@@ -186,7 +193,17 @@ final class ScrollSyncManager {
                 continue
             }
 
-            let newTgtPos = (tgtOld + delta).clamped(to: 0.0...1.0)
+            // Scale delta by page-count ratio when page-based scroll is active.
+            let effectiveDelta: Double
+            if pageBasedScroll,
+               let srcPages = source.pageCount,
+               let tgtPages = target.pageCount {
+                effectiveDelta = delta * Double(srcPages) / Double(tgtPages)
+            } else {
+                effectiveDelta = delta
+            }
+
+            let newTgtPos = (tgtOld + effectiveDelta).clamped(to: 0.0...1.0)
             lastPositions[tgtKey] = newTgtPos
             AXUIElementSetAttributeValue(tgtBar, kAXValueAttribute as CFString,
                                          NSNumber(value: newTgtPos) as CFTypeRef)
