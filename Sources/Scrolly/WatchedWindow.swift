@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import PDFKit
 
 /// Represents a window being monitored for scroll synchronisation.
 final class WatchedWindow {
@@ -8,6 +9,11 @@ final class WatchedWindow {
     let windowTitle: String
     /// The accessibility element for the window. Valid as long as the window is open.
     let axWindow: AXUIElement
+
+    /// Cached PDF page count, invalidated when the file's modification date changes.
+    private var pageCountCache: (url: String, modDate: Date, count: Int)?
+    /// Last time we checked the file's modification date (throttle to 1/sec).
+    private var lastStatTime: Date = .distantPast
 
     init(pid: pid_t, appName: String, windowTitle: String, axWindow: AXUIElement) {
         self.pid = pid
@@ -18,6 +24,52 @@ final class WatchedWindow {
 
     /// Human-readable label for menu items.
     var menuLabel: String { "\(appName) — \(windowTitle)" }
+
+    /// Number of pages in the document, if it is a local PDF.
+    /// Returns `nil` for non-PDFs, inaccessible documents, or page count of 0.
+    /// Cached with mod-date invalidation, stat throttled to once per second.
+    var pageCount: Int? {
+        // 1. Read document URL from AX
+        var docRef: AnyObject?
+        guard AXUIElementCopyAttributeValue(axWindow, kAXDocumentAttribute as CFString, &docRef) == .success,
+              let urlString = docRef as? String,
+              let url = URL(string: urlString),
+              url.scheme == "file",
+              url.path.lowercased().hasSuffix(".pdf") else {
+            return nil
+        }
+
+        let path = url.path
+        let now = Date()
+
+        // 2. Check cache — throttle stat() to once per second
+        if let cached = pageCountCache, cached.url == urlString {
+            if now.timeIntervalSince(lastStatTime) < 1.0 {
+                return cached.count > 0 ? cached.count : nil
+            }
+            // Re-stat to check for modification
+            lastStatTime = now
+            if let modDate = fileModificationDate(path: path), modDate == cached.modDate {
+                return cached.count > 0 ? cached.count : nil
+            }
+            // File changed — fall through to re-read
+        }
+
+        // 3. Read page count via PDFKit
+        lastStatTime = now
+        guard let modDate = fileModificationDate(path: path),
+              let doc = PDFDocument(url: URL(fileURLWithPath: path)) else {
+            pageCountCache = nil
+            return nil
+        }
+        let count = doc.pageCount
+        pageCountCache = (url: urlString, modDate: modDate, count: count)
+        return count > 0 ? count : nil
+    }
+
+    private func fileModificationDate(path: String) -> Date? {
+        try? FileManager.default.attributesOfItem(atPath: path)[.modificationDate] as? Date
+    }
 
     /// Window frame in Accessibility (AX) coordinates:
     ///   origin = top-left of primary screen, Y increases downward.
