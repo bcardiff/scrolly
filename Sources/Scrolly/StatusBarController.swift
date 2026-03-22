@@ -123,6 +123,16 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         about.target = self
         menu.addItem(about)
 
+        // -- Page Based Scroll toggle --
+        let pageBasedItem = NSMenuItem(
+            title: "Page Based Scroll",
+            action: #selector(togglePageBasedScroll),
+            keyEquivalent: ""
+        )
+        pageBasedItem.target = self
+        pageBasedItem.state = syncManager.pageBasedScroll ? .on : .off
+        menu.addItem(pageBasedItem)
+
         // -- Quit / Restart (toggled live via flagsChanged monitor in menuWillOpen) --
         let quit = NSMenuItem(title: "Quit Scrolly", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "")
         quit.tag = StatusBarController.quitItemTag
@@ -189,6 +199,11 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         if alert.runModal() == .alertFirstButtonReturn {
             NSWorkspace.shared.open(URL(string: "https://github.com/bcardiff/scrolly")!)
         }
+    }
+
+    @objc private func togglePageBasedScroll() {
+        syncManager.pageBasedScroll.toggle()
+        rebuildMenu()
     }
 
     @objc private func openAccessibilitySettings() {
